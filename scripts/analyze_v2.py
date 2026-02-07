@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-🦅 Binance Hunter v2.1 - 멀티 인디케이터 + 세력 패턴 감지
-Indicators: RSI, MACD, CCI, Stochastic
+🦅 Binance Hunter v2.2 - 멀티 인디케이터 + 일목균형표 + 세력 패턴
+Indicators: RSI, MACD, CCI, Stochastic, Ichimoku Cloud
 """
 
 import requests
@@ -30,7 +30,6 @@ def get_ticker(symbol):
         return {}
 
 def calculate_ema(data, period):
-    """Calculate EMA"""
     if len(data) < period:
         return data[-1] if data else 0
     multiplier = 2 / (period + 1)
@@ -40,13 +39,11 @@ def calculate_ema(data, period):
     return ema
 
 def calculate_sma(data, period):
-    """Calculate SMA"""
     if len(data) < period:
         return sum(data) / len(data) if data else 0
     return sum(data[-period:]) / period
 
 def calculate_rsi(closes, period=14):
-    """Calculate RSI"""
     if len(closes) < period + 1:
         return 50
     deltas = [closes[i] - closes[i-1] for i in range(1, len(closes))]
@@ -60,145 +57,161 @@ def calculate_rsi(closes, period=14):
     return round(100 - (100 / (1 + rs)), 1)
 
 def calculate_macd(closes, fast=12, slow=26, signal=9):
-    """
-    Calculate MACD
-    Returns: macd_line, signal_line, histogram
-    """
     if len(closes) < slow + signal:
         return 0, 0, 0
-    
     ema_fast = calculate_ema(closes, fast)
     ema_slow = calculate_ema(closes, slow)
     macd_line = ema_fast - ema_slow
-    
-    # Calculate MACD for signal line
     macd_values = []
     for i in range(slow, len(closes) + 1):
         ef = calculate_ema(closes[:i], fast)
         es = calculate_ema(closes[:i], slow)
         macd_values.append(ef - es)
-    
     signal_line = calculate_ema(macd_values, signal) if len(macd_values) >= signal else macd_line
     histogram = macd_line - signal_line
-    
     return round(macd_line, 4), round(signal_line, 4), round(histogram, 4)
 
 def calculate_cci(highs, lows, closes, period=20):
-    """
-    Calculate CCI (Commodity Channel Index)
-    CCI = (Typical Price - SMA) / (0.015 * Mean Deviation)
-    """
     if len(closes) < period:
         return 0
-    
-    # Typical Price = (High + Low + Close) / 3
     tp = [(highs[i] + lows[i] + closes[i]) / 3 for i in range(len(closes))]
-    
-    # SMA of Typical Price
     tp_sma = calculate_sma(tp, period)
-    
-    # Mean Deviation
     mean_dev = sum(abs(tp[i] - tp_sma) for i in range(-period, 0)) / period
-    
     if mean_dev == 0:
         return 0
-    
     cci = (tp[-1] - tp_sma) / (0.015 * mean_dev)
     return round(cci, 1)
 
 def calculate_stochastic(highs, lows, closes, k_period=14, d_period=3):
-    """
-    Calculate Stochastic Oscillator
-    %K = (Current Close - Lowest Low) / (Highest High - Lowest Low) * 100
-    %D = SMA of %K
-    """
     if len(closes) < k_period:
         return 50, 50
-    
-    # Calculate %K values
     k_values = []
     for i in range(k_period - 1, len(closes)):
         lowest_low = min(lows[i - k_period + 1:i + 1])
         highest_high = max(highs[i - k_period + 1:i + 1])
-        
         if highest_high == lowest_low:
             k_values.append(50)
         else:
             k = ((closes[i] - lowest_low) / (highest_high - lowest_low)) * 100
             k_values.append(k)
-    
     k_current = k_values[-1] if k_values else 50
     d_current = calculate_sma(k_values, d_period) if len(k_values) >= d_period else k_current
-    
     return round(k_current, 1), round(d_current, 1)
 
+def calculate_ichimoku(highs, lows, closes, tenkan=9, kijun=26, senkou_b=52):
+    """
+    일목균형표 (Ichimoku Cloud) 계산
+    - 전환선 (Tenkan-sen): (9일 최고 + 9일 최저) / 2
+    - 기준선 (Kijun-sen): (26일 최고 + 26일 최저) / 2
+    - 선행스팬A (Senkou A): (전환선 + 기준선) / 2, 26일 앞에 표시
+    - 선행스팬B (Senkou B): (52일 최고 + 52일 최저) / 2, 26일 앞에 표시
+    - 후행스팬 (Chikou): 현재 종가를 26일 뒤에 표시
+    """
+    if len(closes) < senkou_b:
+        return None
+    
+    # 전환선 (Tenkan-sen) - 9일
+    tenkan_high = max(highs[-tenkan:])
+    tenkan_low = min(lows[-tenkan:])
+    tenkan_sen = (tenkan_high + tenkan_low) / 2
+    
+    # 기준선 (Kijun-sen) - 26일
+    kijun_high = max(highs[-kijun:])
+    kijun_low = min(lows[-kijun:])
+    kijun_sen = (kijun_high + kijun_low) / 2
+    
+    # 선행스팬A (Senkou Span A) - 현재 기준 (실제는 26일 앞에 표시)
+    senkou_span_a = (tenkan_sen + kijun_sen) / 2
+    
+    # 선행스팬B (Senkou Span B) - 52일 기준
+    senkou_b_high = max(highs[-senkou_b:])
+    senkou_b_low = min(lows[-senkou_b:])
+    senkou_span_b = (senkou_b_high + senkou_b_low) / 2
+    
+    # 현재 가격
+    current_price = closes[-1]
+    
+    # 구름 상단/하단
+    cloud_top = max(senkou_span_a, senkou_span_b)
+    cloud_bottom = min(senkou_span_a, senkou_span_b)
+    
+    # 구름 색상 (A > B면 양운, A < B면 음운)
+    cloud_color = "GREEN" if senkou_span_a > senkou_span_b else "RED"
+    
+    # 가격 vs 구름 위치
+    if current_price > cloud_top:
+        price_position = "ABOVE_CLOUD"  # 구름 위 = 강세
+    elif current_price < cloud_bottom:
+        price_position = "BELOW_CLOUD"  # 구름 아래 = 약세
+    else:
+        price_position = "IN_CLOUD"     # 구름 안 = 중립/전환중
+    
+    # TK 크로스 (전환선 vs 기준선)
+    tk_cross = "BULLISH" if tenkan_sen > kijun_sen else "BEARISH"
+    
+    # 신호 판단
+    if price_position == "ABOVE_CLOUD" and cloud_color == "GREEN" and tk_cross == "BULLISH":
+        signal = "STRONG_BULLISH"  # 삼역호전 (강한 매수)
+    elif price_position == "BELOW_CLOUD" and cloud_color == "RED" and tk_cross == "BEARISH":
+        signal = "STRONG_BEARISH"  # 삼역역전 (강한 매도)
+    elif price_position == "ABOVE_CLOUD":
+        signal = "BULLISH"
+    elif price_position == "BELOW_CLOUD":
+        signal = "BEARISH"
+    else:
+        signal = "NEUTRAL"
+    
+    return {
+        "tenkan_sen": round(tenkan_sen, 2),      # 전환선
+        "kijun_sen": round(kijun_sen, 2),        # 기준선
+        "senkou_span_a": round(senkou_span_a, 2), # 선행스팬A
+        "senkou_span_b": round(senkou_span_b, 2), # 선행스팬B
+        "cloud_top": round(cloud_top, 2),
+        "cloud_bottom": round(cloud_bottom, 2),
+        "cloud_color": cloud_color,             # GREEN/RED
+        "price_position": price_position,       # ABOVE/BELOW/IN_CLOUD
+        "tk_cross": tk_cross,                   # TK 크로스
+        "signal": signal                        # 종합 신호
+    }
+
 def calculate_volume_analysis(klines):
-    """거래량 분석 - 세력 활동 감지"""
     if len(klines) < 20:
         return {"volume_ratio": 1, "volume_trend": "NORMAL", "whale_alert": False}
-    
     volumes = [float(k[5]) for k in klines]
     recent_vol = sum(volumes[-5:]) / 5
     avg_vol = sum(volumes[-20:]) / 20
-    
     volume_ratio = round(recent_vol / avg_vol, 2) if avg_vol > 0 else 1
-    
     if volume_ratio > 3:
-        volume_trend = "EXPLOSIVE"
-        whale_alert = True
+        volume_trend, whale_alert = "EXPLOSIVE", True
     elif volume_ratio > 2:
-        volume_trend = "SURGE"
-        whale_alert = True
+        volume_trend, whale_alert = "SURGE", True
     elif volume_ratio > 1.5:
-        volume_trend = "RISING"
-        whale_alert = False
+        volume_trend, whale_alert = "RISING", False
     elif volume_ratio < 0.5:
-        volume_trend = "DEAD"
-        whale_alert = False
+        volume_trend, whale_alert = "DEAD", False
     else:
-        volume_trend = "NORMAL"
-        whale_alert = False
-    
-    return {
-        "volume_ratio": volume_ratio,
-        "volume_trend": volume_trend,
-        "whale_alert": whale_alert
-    }
+        volume_trend, whale_alert = "NORMAL", False
+    return {"volume_ratio": volume_ratio, "volume_trend": volume_trend, "whale_alert": whale_alert}
 
 def detect_box_range(klines, lookback=20):
-    """박스권 감지"""
     if len(klines) < lookback:
-        return {"in_box": False, "box_top": 0, "box_bottom": 0, "breakout": None}
-    
+        return {"in_box": False, "breakout": None}
     highs = [float(k[2]) for k in klines[-lookback:]]
     lows = [float(k[3]) for k in klines[-lookback:]]
     closes = [float(k[4]) for k in klines[-lookback:]]
-    
     box_top = max(highs[:-1])
     box_bottom = min(lows[:-1])
     current_price = closes[-1]
-    
-    box_range = box_top - box_bottom
-    box_percent = (box_range / box_bottom * 100) if box_bottom > 0 else 0
-    
+    box_percent = ((box_top - box_bottom) / box_bottom * 100) if box_bottom > 0 else 0
     in_box = box_percent < 10
-    
     breakout = None
     if current_price > box_top * 1.02:
         breakout = "UP"
     elif current_price < box_bottom * 0.98:
         breakout = "DOWN"
-    
-    return {
-        "in_box": in_box,
-        "box_top": round(box_top, 4),
-        "box_bottom": round(box_bottom, 4),
-        "box_percent": round(box_percent, 1),
-        "breakout": breakout
-    }
+    return {"in_box": in_box, "breakout": breakout}
 
 def detect_whale_phase(rsi, volume_trend, breakout, price_change_24h):
-    """세력 사이클 단계 감지"""
     if volume_trend == "DEAD" and rsi < 40:
         return "ACCUMULATION"
     elif volume_trend in ["SURGE", "EXPLOSIVE"] and breakout == "UP":
@@ -207,30 +220,17 @@ def detect_whale_phase(rsi, volume_trend, breakout, price_change_24h):
         return "DISTRIBUTION"
     elif rsi > 65 and price_change_24h < -5:
         return "MARKDOWN"
-    else:
-        return "NEUTRAL"
-
-def get_indicator_signal(name, value, overbought, oversold):
-    """Get signal from indicator"""
-    if value >= overbought:
-        return "OVERBOUGHT"
-    elif value <= oversold:
-        return "OVERSOLD"
-    else:
-        return "NEUTRAL"
+    return "NEUTRAL"
 
 def analyze(symbol):
-    """Main analysis function with multiple indicators"""
-    # Fetch data
-    klines_1d = get_klines(symbol, "1d", 50)
-    klines_4h = get_klines(symbol, "4h", 50)
-    klines_15m = get_klines(symbol, "15m", 50)
+    klines_1d = get_klines(symbol, "1d", 60)
+    klines_4h = get_klines(symbol, "4h", 60)
+    klines_15m = get_klines(symbol, "15m", 60)
     ticker = get_ticker(symbol)
     
     if not klines_4h or not ticker:
         return {"error": "Failed to fetch data"}
     
-    # Extract OHLCV
     highs_4h = [float(k[2]) for k in klines_4h]
     lows_4h = [float(k[3]) for k in klines_4h]
     closes_4h = [float(k[4]) for k in klines_4h]
@@ -238,71 +238,54 @@ def analyze(symbol):
     closes_15m = [float(k[4]) for k in klines_15m]
     highs_15m = [float(k[2]) for k in klines_15m]
     lows_15m = [float(k[3]) for k in klines_15m]
+    highs_1d = [float(k[2]) for k in klines_1d]
+    lows_1d = [float(k[3]) for k in klines_1d]
     
-    # Basic metrics
     price = float(ticker.get("lastPrice", 0))
     price_change_24h = float(ticker.get("priceChangePercent", 0))
     
-    # === INDICATORS ===
-    
-    # RSI (14)
+    # Indicators
     rsi_4h = calculate_rsi(closes_4h)
     rsi_15m = calculate_rsi(closes_15m)
-    rsi_1d = calculate_rsi(closes_1d)
-    
-    # MACD (12, 26, 9)
     macd_line, macd_signal, macd_hist = calculate_macd(closes_4h)
     macd_cross = "BULLISH" if macd_line > macd_signal else "BEARISH"
-    
-    # CCI (20)
     cci_4h = calculate_cci(highs_4h, lows_4h, closes_4h)
-    cci_15m = calculate_cci(highs_15m, lows_15m, closes_15m)
-    
-    # Stochastic (14, 3)
     stoch_k, stoch_d = calculate_stochastic(highs_4h, lows_4h, closes_4h)
     stoch_cross = "BULLISH" if stoch_k > stoch_d else "BEARISH"
     
-    # === INDICATOR SIGNALS ===
-    rsi_signal = get_indicator_signal("RSI", rsi_4h, 70, 30)
-    cci_signal = get_indicator_signal("CCI", cci_4h, 100, -100)
-    stoch_signal = get_indicator_signal("Stoch", stoch_k, 80, 20)
+    # 일목균형표 (4H 기준)
+    ichimoku = calculate_ichimoku(highs_4h, lows_4h, closes_4h)
     
-    # === CONFLUENCE SCORE ===
-    # Count bullish/bearish signals
+    # 일목균형표 (1D 기준 - 더 신뢰도 높음)
+    ichimoku_1d = calculate_ichimoku(highs_1d, lows_1d, closes_1d)
+    
+    # Confluence count
     bullish_count = 0
     bearish_count = 0
     
-    # RSI
     if rsi_4h < 30: bullish_count += 1
     elif rsi_4h > 70: bearish_count += 1
     
-    # MACD
     if macd_cross == "BULLISH" and macd_hist > 0: bullish_count += 1
     elif macd_cross == "BEARISH" and macd_hist < 0: bearish_count += 1
     
-    # CCI
     if cci_4h < -100: bullish_count += 1
     elif cci_4h > 100: bearish_count += 1
     
-    # Stochastic
     if stoch_k < 20 and stoch_cross == "BULLISH": bullish_count += 1
     elif stoch_k > 80 and stoch_cross == "BEARISH": bearish_count += 1
     
-    # Volume analysis
+    # 일목균형표 신호 추가
+    if ichimoku:
+        if ichimoku["signal"] == "STRONG_BULLISH": bullish_count += 2
+        elif ichimoku["signal"] == "BULLISH": bullish_count += 1
+        elif ichimoku["signal"] == "STRONG_BEARISH": bearish_count += 2
+        elif ichimoku["signal"] == "BEARISH": bearish_count += 1
+    
     vol_analysis = calculate_volume_analysis(klines_4h)
-    
-    # Box range detection
     box_analysis = detect_box_range(klines_4h)
+    whale_phase = detect_whale_phase(rsi_4h, vol_analysis["volume_trend"], box_analysis["breakout"], price_change_24h)
     
-    # Whale phase detection
-    whale_phase = detect_whale_phase(
-        rsi_4h, 
-        vol_analysis["volume_trend"],
-        box_analysis["breakout"],
-        price_change_24h
-    )
-    
-    # Trend
     ema_20 = calculate_ema(closes_4h, 20)
     if price > ema_20 * 1.02:
         trend = "BULLISH"
@@ -311,41 +294,40 @@ def analyze(symbol):
     else:
         trend = "NEUTRAL"
     
-    # === FINAL SIGNAL ===
+    # Final Signal
     action = "⏸️ WAIT"
     signal_reason = ""
     risk_level = "NORMAL"
     confluence = f"{bullish_count}B/{bearish_count}S"
     
-    # Priority 1: Whale danger
     if whale_phase == "DISTRIBUTION":
         action = "🚨 DANGER"
         signal_reason = "세력 설거지 구간! 매수 금지"
         risk_level = "HIGH"
-    
-    # Priority 2: Breakout with volume
     elif box_analysis["breakout"] == "UP" and vol_analysis["volume_ratio"] > 2:
         action = "⚠️ BREAKOUT"
         signal_reason = f"박스권 상향돌파 + 거래량 {vol_analysis['volume_ratio']}배"
         risk_level = "MEDIUM"
-    
-    # Priority 3: Strong confluence (3+ indicators agree)
-    elif bullish_count >= 3 and trend != "BEARISH":
+    elif ichimoku and ichimoku["signal"] == "STRONG_BULLISH" and bullish_count >= 3:
+        action = "🟢 STRONG LONG"
+        signal_reason = f"삼역호전 + 다중지표 매수 ({confluence})"
+        risk_level = "MEDIUM"
+    elif ichimoku and ichimoku["signal"] == "STRONG_BEARISH" and bearish_count >= 3:
+        action = "🔴 STRONG SHORT"
+        signal_reason = f"삼역역전 + 다중지표 매도 ({confluence})"
+        risk_level = "MEDIUM"
+    elif bullish_count >= 4:
         action = "🟢 LONG"
-        signal_reason = f"다중지표 매수 신호 ({confluence})"
+        signal_reason = f"다중지표 강한 매수 신호 ({confluence})"
         risk_level = "MEDIUM"
-    elif bearish_count >= 3 and trend != "BULLISH":
+    elif bearish_count >= 4:
         action = "🔴 SHORT"
-        signal_reason = f"다중지표 매도 신호 ({confluence})"
+        signal_reason = f"다중지표 강한 매도 신호 ({confluence})"
         risk_level = "MEDIUM"
-    
-    # Priority 4: Accumulation watch
     elif whale_phase == "ACCUMULATION":
         action = "👀 WATCH"
         signal_reason = "세력 매집 가능성 - 관찰 필요"
         risk_level = "LOW"
-    
-    # Priority 5: Moderate confluence (2 indicators)
     elif bullish_count >= 2 and bearish_count == 0:
         action = "👀 WATCH"
         signal_reason = f"매수 관심 ({confluence})"
@@ -357,33 +339,28 @@ def analyze(symbol):
     else:
         signal_reason = f"명확한 시그널 없음 ({confluence})"
     
-    return {
+    result = {
         "symbol": symbol,
         "price": price,
         "change_24h": f"{price_change_24h:+.1f}%",
         "trend": trend,
         "indicators": {
-            "rsi": {"4h": rsi_4h, "15m": rsi_15m, "signal": rsi_signal},
-            "macd": {"line": macd_line, "signal": macd_signal, "hist": macd_hist, "cross": macd_cross},
-            "cci": {"4h": cci_4h, "15m": cci_15m, "signal": cci_signal},
-            "stoch": {"k": stoch_k, "d": stoch_d, "cross": stoch_cross, "signal": stoch_signal}
+            "rsi": {"4h": rsi_4h, "15m": rsi_15m},
+            "macd": {"cross": macd_cross, "hist": macd_hist},
+            "cci": cci_4h,
+            "stoch": {"k": stoch_k, "d": stoch_d, "cross": stoch_cross}
         },
+        "ichimoku": ichimoku,
+        "ichimoku_1d": ichimoku_1d,
         "confluence": confluence,
-        "volume": {
-            "ratio": vol_analysis["volume_ratio"],
-            "trend": vol_analysis["volume_trend"],
-            "whale_alert": vol_analysis["whale_alert"]
-        },
-        "box_range": {
-            "in_box": box_analysis["in_box"],
-            "breakout": box_analysis["breakout"]
-        },
+        "volume": vol_analysis,
         "whale_phase": whale_phase,
         "action": action,
         "signal_reason": signal_reason,
         "risk_level": risk_level,
         "timestamp": datetime.utcnow().isoformat()
     }
+    return result
 
 if __name__ == "__main__":
     symbol = sys.argv[1] if len(sys.argv) > 1 else "BTCUSDT"

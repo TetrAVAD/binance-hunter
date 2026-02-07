@@ -125,3 +125,26 @@ python3 scripts/analyze_v2.py BTCUSDT
 - **3+ 일치** → 강한 신호 (LONG/SHORT)
 - **2개 일치** → 관찰 필요 (WATCH)
 - **0-1개** → 대기 (WAIT)
+
+---
+
+## ☁️ v2.2 - 일목균형표 (Ichimoku Cloud)
+
+### 일목균형표 구성요소
+
+| 요소 | 일본어 | 계산 |
+|------|--------|------|
+| 전환선 | Tenkan-sen | (9일 고가 + 9일 저가) / 2 |
+| 기준선 | Kijun-sen | (26일 고가 + 26일 저가) / 2 |
+| 선행스팬A | Senkou A | (전환선 + 기준선) / 2 |
+| 선행스팬B | Senkou B | (52일 고가 + 52일 저가) / 2 |
+
+### 신호 해석
+
+| 상태 | 의미 |
+|------|------|
+| `ABOVE_CLOUD` | 구름 위 = 강세 |
+| `BELOW_CLOUD` | 구름 아래 = 약세 |
+| `IN_CLOUD` | 구름 안 = 전환 중 |
+| `STRONG_BULLISH` | 삼역호전 (구름위 + 양운 + TK골든) |
+| `STRONG_BEARISH` | 삼역역전 (구름아래 + 음운 + TK데드) |
